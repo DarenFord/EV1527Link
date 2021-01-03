@@ -2,10 +2,10 @@
   An EV1527 gateway for use with domoticz and other home automation systems that use the RF Link serial protocol
   Copyright (c) 2020 Daren Ford.  All rights reserved.
     
-  Last update: 22/12/2020
-  Version: 1.0
+  Last update: 23/12/2020
+  Version: 1.1
   
-  Project home: https://
+  Project home: https://github.com/DarenFord/EV1527Link
   
   This is free software; you can redistribute it and/or
   modify it under the terms of the GNU Lesser General Public
@@ -22,17 +22,20 @@
 */
 
 #include <RCSwitch.h>
+#include <Bounce2.h>
 
 RCSwitch rcs = RCSwitch();
+Bounce debouncer = Bounce();
 
 //version definition
-#define VERSION "EV1527 Gateway V1.0"
+#define VERSION "EV1527 Gateway V1.1"
 
 //input/output pin definitions
 #define RX_IRQ 0 // Interrupt number (IRQ 0 = D2) for the 433MHz receiver data pin
 #define TX_PIN 10 //433MHz ASK transmitter module (e.g. FS1000A) data pin
-#define TX_LED_PIN 3
-#define RX_LED_PIN 4
+#define TX_LED_PIN 4
+#define RX_LED_PIN 3
+#define INPUT_PIN 6 //digital input - pull down to activate
 
 //communication definitions
 #define TX_PULSE_LENGTH 300 //in milliseconds
@@ -47,6 +50,7 @@ long lastRxCommand = 0;
 int numRxCommands = 0;
 uint32_t lastRxCommandReceivedTime = 0;
 uint32_t rxLedOnTime = 0;
+int lastInputValue = HIGH;
 
 void setup() {
   Serial.begin(57600);
@@ -55,6 +59,10 @@ void setup() {
   pinMode(RX_LED_PIN, OUTPUT);
   RxLED(LOW);
   TxLED(LOW);
+
+  pinMode(INPUT_PIN, INPUT_PULLUP);
+  debouncer.attach(INPUT_PIN);
+  debouncer.interval(5);
   
   rcs.enableReceive(RX_IRQ);  
   rcs.enableTransmit(TX_PIN);
@@ -98,12 +106,19 @@ void loop() {
       lastRxCommandReceivedTime = rxCommandReceivedTime;
     }
     
-    rcs.resetAvailable();
+    rcs.resetAvailable();    
   }
 
   if ((rxLedOnTime > 0) && ((millis() - rxLedOnTime) > RX_LED_DURATION)) {
     RxLED(LOW);
   }
+
+  debouncer.update();  
+  int value = debouncer.read();  
+  if ((value != lastInputValue) && (value == LOW)) {
+      EchoCommand("ID=999FF", "SWITCH=01", "CMD=ON");
+  }
+  lastInputValue = value;
 }
 
 void RxOk()
