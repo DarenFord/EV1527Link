@@ -11,7 +11,7 @@ I'm a long-time user of Domoticz and the RF Link gateway (http://www.rflink.nl/b
 I wanted to use cheap security products in my home automation system (like the Kerui D026 door/window sensor, which didn't work correctly/reliably with RF Link) and this lead to creating a new gateway specifically for security products that use the EV1527 protocol. The gateway uses RF Link serial protocol to communicate with the home automation system as this protocol is already supported in Domoticz.
 
 # Hardware
-A Fritzing schematic diagram is included in the package and is extemely simple to wire-up. Build it on a experimental breadboard first to test that it works and when you're happy, solder the components onto prototype PCB. If you're feeling really adventurous, you could create a PCB layout and add it to the project :-)
+A Fritzing schematic diagram is included in the package and is extemely simple to wire-up. Build it on a experimental breadboard first to test that it works and when you're happy, solder the components onto prototype PCB. If you're feeling really adventurous, you could create a PCB layout and contribute it to the project :-)
 
 It is important to use a good quality receiver module. The receiver module that sometimes comes with the FS-1000A transmitter module is not good enough and I would suggest using an RXB6 module (see parts list below) or something of similar quality.
 
