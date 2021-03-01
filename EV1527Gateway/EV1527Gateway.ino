@@ -40,6 +40,7 @@ Bounce debouncer = Bounce();
 //communication definitions
 #define TX_PULSE_LENGTH 300 //in milliseconds
 #define TX_REPEATS 15
+#define TX_REPEATS_LEARNING_MODE 50
 #define RX_REPEATS 3
 #define RX_GUARD_TIME 1000 //in milliseconds
 #define RX_LED_DURATION 1000 //in milliseconds
@@ -216,10 +217,19 @@ void ParseTxCommand(String txCommand)
         strcpy(cmdUnit, strtokIdx);
         strtokIdx = strtok(NULL, ";");
         strcpy(cmdAction, strtokIdx);
-        if (SendCommand(cmdDevice, cmdUnit, cmdAction)) {
+
+        long device = StrToHex((String)cmdDevice);
+        long unit = StrToHex((String)cmdUnit);
+        if ((device == 0) && (unit == 1)) {
           RxOk();
-          return;
-        }        
+          ToggleLearningMode(cmdAction);          
+          return;          
+        } else {
+          if (SendCommand(cmdDevice, cmdUnit, cmdAction)) {
+            RxOk();
+            return;
+          }                  
+        }
       }      
       break;
     }
@@ -268,6 +278,15 @@ bool SendCommand(String cmdDevice, String cmdUnit, String cmdAction)
   }
 
   return false;
+}
+
+void ToggleLearningMode(String cmdAction)
+{
+  if (cmdAction == "ON") {
+    rcs.setRepeatTransmit(TX_REPEATS_LEARNING_MODE);
+  } else {
+    rcs.setRepeatTransmit(TX_REPEATS);
+  }
 }
 
 long StrToHex(String str)
