@@ -2,9 +2,24 @@
   An EV1527 gateway for use with domoticz and other home automation systems that use the RF Link serial protocol
   Copyright (c) 2020 Daren Ford.  All rights reserved.
     
-  Last update: 23/12/2020
-  Version: 1.1
-  
+  Last update: 26/09/2021
+  Version: 2.0
+
+  Changes: Added support for Byron protocol (doorbells) - watch out, they use alternating codes (so, two devices will be created)
+
+  Example send command string: 10;Byron;295FD59;03;ON;
+
+  Send commands:
+  10;Byron;295FD59;3;ON;
+
+  Loopback commands:
+  11;20;45;EV1527;ID=295FD59;SWITCH=3;CMD=ON;
+  11;20;45;Byron;ID=295FD59;SWITCH=3;CMD=ON;
+
+  Loopback commands in Domoticz:
+  20;45;EV1527;ID=295FD59;SWITCH=3;CMD=ON;
+  20;45;Byron;ID=295FD59;SWITCH=3;CMD=ON;
+
   Project home: https://github.com/DarenFord/EV1527Link
   
   This is free software; you can redistribute it and/or
@@ -24,11 +39,19 @@
 #include <RCSwitch.h>
 #include <Bounce2.h>
 
+//Format for protocol definitions:
+//{pulselength, Sync bit, "0" bit, "1" bit}
+RCSwitch::Protocol EV1527Protocol = {250, {6, 31}, {1, 3}, {3, 1}, false}; //custom protocol (not in RCSwitch.cpp)
+RCSwitch::Protocol ByronProtocol =  {500, {1, 14}, {1, 3}, {3, 1}, false}; //custom protocol (not in RCSwitch.cpp)
+
 RCSwitch rcs = RCSwitch();
+String ByronProtocolName = "Byron";
+String EV1527ProtocolName = "EV1527";
+
 Bounce debouncer = Bounce();
 
 //version definition
-#define VERSION "EV1527 Gateway V1.1"
+#define VERSION "EV1527 Gateway V2.1"
 
 //input/output pin definitions
 #define RX_IRQ 0 // Interrupt number (IRQ 0 = D2) for the 433MHz receiver data pin
@@ -74,13 +97,23 @@ void setup() {
 
 void loop() {
   if (Serial.available() > 0) {
-    String txCommand = Serial.readString();    
-    txCommand.toUpperCase();
+    String txCommand = Serial.readString();
     ParseTxCommand(txCommand);
   }
 
   if (rcs.available()) {
-    if ((rcs.getReceivedProtocol() == 1) && (rcs.getReceivedBitlength() == 24)) {
+    String ProtocolName = "";
+    int ProtocolNum = rcs.getReceivedProtocol();
+    int BitLength = rcs.getReceivedBitlength();
+    int PulseLength = rcs.getReceivedDelay();
+    
+    if ((ProtocolNum == 1) && (BitLength == 24) && (PulseLength > 230) && (PulseLength < 330)) {
+      ProtocolName = EV1527ProtocolName;
+    } else if ((ProtocolNum == 2) && (BitLength == 32) && (PulseLength > 680) && (PulseLength < 780)) { //RCSwitch actually reads the pulse length incorrectly ~707mS
+      ProtocolName = ByronProtocolName;
+    }
+    
+    if (ProtocolName.length() != 0) {
       long rxCommand = rcs.getReceivedValue();
       uint32_t rxCommandReceivedTime = millis();
 
@@ -98,7 +131,7 @@ void loop() {
       {
         String rxCommandStr = String(rxCommand, HEX);
         rxCommandStr.toUpperCase();
-        String message = ParseRxCommand(rxCommandStr);
+        String message = ParseRxCommand(rxCommandStr, ProtocolName);
         RxLED(HIGH);
         SendMessage(message);
       }
@@ -117,7 +150,7 @@ void loop() {
   debouncer.update();  
   int value = debouncer.read();  
   if ((value != lastInputValue) && (value == LOW)) {
-      EchoCommand("ID=999FF", "SWITCH=01", "CMD=ON");
+      EchoCommand(EV1527ProtocolName, "ID=999FF", "SWITCH=01", "CMD=ON");
   }
   lastInputValue = value;
 }
@@ -172,9 +205,10 @@ void TxLED(bool state)
   }
 }
 
-String ParseRxCommand(String rxCommandStr)
+String ParseRxCommand(String rxCommandStr, String ProtocolName)
 {
-  String toRet = "EV1527;";
+  String toRet = ProtocolName;
+  toRet += ";";
 
   int i = rxCommandStr.length();
   if (i > 0) {
@@ -190,6 +224,10 @@ String ParseRxCommand(String rxCommandStr)
 
 void ParseTxCommand(String txCommand) 
 {
+  //debug code
+  //Serial.print("->->");
+  //Serial.println(txCommand);
+
   char cmdProtocol[32] = {0};
   char cmdDevice[16] = {0};
   char cmdUnit[16] = {0};
@@ -210,7 +248,7 @@ void ParseTxCommand(String txCommand)
       } else if (cmdProtocolStr == "VERSION") {
         SendMessage(VERSION);
         return;          
-      } else if (cmdProtocolStr == "EV1527") {
+      } else if ((cmdProtocolStr == EV1527ProtocolName) || (cmdProtocolStr == ByronProtocolName)) {
         strtokIdx = strtok(NULL, ";");
         strcpy(cmdDevice, strtokIdx);
         strtokIdx = strtok(NULL, ";");
@@ -218,14 +256,14 @@ void ParseTxCommand(String txCommand)
         strtokIdx = strtok(NULL, ";");
         strcpy(cmdAction, strtokIdx);
 
-        long device = StrToHex((String)cmdDevice);
-        long unit = StrToHex((String)cmdUnit);
+        long device = HexToLong((String)cmdDevice);
+        long unit = HexToLong((String)cmdUnit);
         if ((device == 0) && (unit == 1)) {
           RxOk();
           ToggleLearningMode(cmdAction);          
           return;          
         } else {
-          if (SendCommand(cmdDevice, cmdUnit, cmdAction)) {
+          if (SendCommand(cmdProtocolStr, cmdDevice, cmdUnit, cmdAction)) {
             RxOk();
             return;
           }                  
@@ -240,7 +278,7 @@ void ParseTxCommand(String txCommand)
       strtokIdx = strtok(NULL, ";");
       strcpy(cmdProtocol, strtokIdx);
       String cmdProtocolStr = cmdProtocol;
-      if ((cmdSubCode == 20) && (cmdProtocolStr == "EV1527")) {
+      if ((cmdSubCode == 20) && ((cmdProtocolStr == EV1527ProtocolName) || (cmdProtocolStr == ByronProtocolName))) {
         strtokIdx = strtok(NULL, ";");
         strcpy(cmdDevice, strtokIdx);
         strtokIdx = strtok(NULL, ";");
@@ -248,7 +286,7 @@ void ParseTxCommand(String txCommand)
         strtokIdx = strtok(NULL, ";");
         strcpy(cmdAction, strtokIdx);
         RxOk();
-        EchoCommand(cmdDevice, cmdUnit, cmdAction);
+        EchoCommand(cmdProtocolStr, cmdDevice, cmdUnit, cmdAction);
         return;
       }      
       break;
@@ -258,21 +296,30 @@ void ParseTxCommand(String txCommand)
   RxCmdUnknown();
 }
 
-void EchoCommand(String cmdDevice, String cmdUnit, String cmdAction)
+void EchoCommand(String ProtocolName, String cmdDevice, String cmdUnit, String cmdAction)
 {
-  SendMessage("EV1527;" + cmdDevice + ";" + cmdUnit + ";" + cmdAction);
+  SendMessage(ProtocolName + ";" + cmdDevice + ";" + cmdUnit + ";" + cmdAction);
 }
 
-bool SendCommand(String cmdDevice, String cmdUnit, String cmdAction)
+bool SendCommand(String ProtocolName, String cmdDevice, String cmdUnit, String cmdAction)
 {
+  cmdAction.toUpperCase();
   if (cmdAction == "ON") {
     if (cmdUnit.startsWith("0") && (cmdUnit.length() == 2)) {
           cmdUnit = cmdUnit.substring(1, 2);
     }
     
-    long code = StrToHex(cmdDevice + cmdUnit);
+    unsigned long code = HexToLong(cmdDevice + cmdUnit);
     TxLED(HIGH);
-    rcs.send(code, 24);
+
+    if (ProtocolName == EV1527ProtocolName) {
+        rcs.setProtocol(EV1527Protocol);
+        rcs.send(code, 24);
+    } else if (ProtocolName == ByronProtocolName) {
+        rcs.setProtocol(ByronProtocol);
+        rcs.send(code, 32);
+    }
+    
     TxLED(LOW);
     return true;
   }
@@ -289,7 +336,16 @@ void ToggleLearningMode(String cmdAction)
   }
 }
 
-long StrToHex(String str)
+unsigned long HexToLong(String str)
 {
-  return strtol(str.c_str(), 0, 16);
+  unsigned long toRet = 0;
+  int len = str.length();
+  for (int i = 0; i < len; i++)
+  {
+    String k = (String)str[i];
+    int j = strtol(k.c_str(), 0, 16);
+    toRet = toRet * 16;
+    toRet += j;
+  }
+  return toRet;
 }
